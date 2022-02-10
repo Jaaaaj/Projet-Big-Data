@@ -26,14 +26,14 @@ sqs = boto3.resource('sqs')
 client_s3 =boto3.client(
      's3'
 )
-bucket_name =read_config("BUCKET","bucketname")
-filename_to_upload =read_config("FILE","filename")
+bucket_name = "stock-big-data-v2"
+filename_to_upload = "data.csv"
 
 print("file + " + filename_to_upload)
-dest_filename = str(read_config("FILE","filename"))
+dest_filename = "data.csv"
 
 client_s3.upload_file(
-         "D:/FISE 3/Projet BIG DATA/script/"+filename_to_upload,
+         "./" + filename_to_upload,
          bucket_name,
          dest_filename
 )

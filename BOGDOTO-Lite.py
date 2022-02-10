@@ -572,7 +572,7 @@ avg=dfprediction['erreur'].mean()
 print(avg)
 
 
-# In[ ]:
+dfprediction.to_csv("./predict.csv")
 
 
 
