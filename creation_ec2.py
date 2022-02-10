@@ -1,10 +1,13 @@
 from contextlib import nullcontext
+from genericpath import exists
 from pip import main
 import boto3
 import os
 import sys
+import paramiko
 from configparser import ConfigParser
 from botocore.exceptions import ClientError
+import time
 
 
 CONFIG_PATH = "config.ini"
@@ -45,13 +48,14 @@ def create_key_pair():
         os.makedirs("./tmp")
 
     # write private key to file with 400 permissions
-    with os.fdopen(os.open("./tmp/aws_ec2_key.pem", os.O_WRONLY | os.O_CREAT, 0o777), "w+") as handle:
+    with os.fdopen(os.open("./tmp/aws_ec2_key.pem", os.O_WRONLY | os.O_CREAT, 0o400), "w+") as handle:
         handle.write(private_key)
 
 
 # Creation de l'instance ec2
 def create_instance():
-    instances = EC2_CLIENT.run_instances(
+    EC2_RESOURCE = boto3.resource('ec2', region_name="us-east-1")
+    instances = EC2_RESOURCE.create_instances(
         ImageId="ami-0a8b4cd432b1c3063",
         MinCount=1,
         MaxCount=1,
@@ -59,7 +63,15 @@ def create_instance():
         KeyName=read_config("EC2", "keyname")
     )
 
-    config_object["EC2"]["id"] = instances["Instances"][0]["InstanceId"]    # Id de la nouvelle machine ec2
+    print(instances)
+
+    instances[0].modify_attribute(
+        Groups=[
+            read_config("EC2", "sg")
+        ]
+    )
+
+    config_object["EC2"]["id"] = instances[0].id    # Id de la nouvelle machine ec2
 
     # Ecriture de l'id de l'instance dans le fichier de config
     with open(CONFIG_PATH, 'w') as configfile:
@@ -72,13 +84,64 @@ def create_instance():
 def get_public_ip():
     reservations = EC2_CLIENT.describe_instances(InstanceIds=[read_config("EC2", "id")]).get("Reservations")
 
-    print(reservations[0]["Instances"][0].get("PublicIpAddress"))
+    print(reservations[0]["Instances"][0].get("PublicDnsName"))
 
-    config_object["EC2"]["ipaddr"] = format(reservations[0]["Instances"][0].get("PublicIpAddress"))    # Adresse IP de la nouvelle machine ec2
+    config_object["EC2"]["ipaddr"] = format(reservations[0]["Instances"][0].get("PublicDnsName"))    # Adresse IP de la nouvelle machine ec2
 
     # Ecriture de l'IP de l'instance dans le fichier de config
     with open(CONFIG_PATH, 'w') as configfile:
         config_object.write(configfile)
+
+
+# Test security groups
+def create_security_groups():
+    EC2_RESOURCE = boto3.resource('ec2', region_name=read_config("EC2", "region"))
+
+    security_groups = EC2_RESOURCE.security_groups.all()
+
+    sg_exist = False
+
+    print('Security Groups:')
+    for security_group in security_groups:
+        print(f'  - Security Group {security_group.id}')
+        if security_group.id == read_config("EC2", "sg"):
+            sg_exist = True
+
+    if sg_exist == False:
+        sg = EC2_RESOURCE.create_security_group(GroupName='Allow remote ssh access', Description = 'ssh-access', VpcId='vpc-00c7270d7cece3692') 
+        sg.authorize_ingress(
+            CidrIp='0.0.0.0/0',
+            FromPort=22,
+            ToPort=22,
+            IpProtocol='tcp',
+        )
+        print("Nouveau security group créé")
+        print(sg.id)
+    else:
+        print("Le security group existe déjà")
+
+
+# Connection en SSH
+def ssh_connection():
+    k = paramiko.RSAKey.from_private_key_file("./tmp/aws_ec2_key.pem")
+    c = paramiko.SSHClient()
+    c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    c.connect(hostname=read_config("EC2", "ipaddr"), username="ec2-user", pkey=k)
+
+    commands = [
+        "sudo yum update -y",
+        "curl \"https://bootstrap.pypa.io/get-pip.py\" -o \"get-pip.py\"",
+        "python3 get-pip.py",
+        "./.local/bin/pip install langdetect seaborn nltk sklearn pandas numpy lime geopy transformers",
+        "python3 ./tidy-2.py"
+    ]
+    for command in commands:
+        print("running command: {}".format(command))
+        stdin , stdout, stderr = c.exec_command(command)
+        print(stdout.read())
+        print(stderr.read())
+
+    c.close
 
 
 # MAIN
@@ -95,6 +158,7 @@ def main():
     if not instance_exists():
         print("Création d'une nouvelle instance ec2...")
         create_key_pair()   # Create ssh keys
+        create_security_groups()
         create_instance()   # Create ec2 instance
 
     else:
@@ -104,6 +168,7 @@ def main():
             EC2_CLIENT.start_instances(InstanceIds=[read_config("EC2", "id")], DryRun=False)
         except ClientError as e:
             print(e)
+            return
 
     # On attend que l'instance soit lancée pour continuer    
     sys.stdout.write("Initialisation de l'instance..")
@@ -117,6 +182,13 @@ def main():
     
     print()
     get_public_ip()     # On récupère l'ip de l'instance maintenant qu'elle est lancée
+
+    # Test paramiko
+    time.sleep(10)
+
+    os.system("scp -i %s %s ec2-user@%s:~/" % ("./tmp/aws_ec2_key.pem", "../tidy-2.py", read_config("EC2", "ipaddr")))  # Envoi du script de machine learning
+    os.system("scp -i %s %s ec2-user@%s:~/" % ("./tmp/aws_ec2_key.pem", "../data.csv", read_config("EC2", "ipaddr")))   # Envoi des données csv
+    ssh_connection()
 
     #  Wait
     input("Instance en cours d'exécution, appuyer sur une touche pour l'arrêter ")
