@@ -3,7 +3,7 @@
 import json, csv
 from pymongo import MongoClient
 
-csvPathFile = 'test.csv'
+csvPathFile = '../predict.csv'
 
 # On convertit le fichier csv au format json
 data2 = []
@@ -18,6 +18,7 @@ client = MongoClient('localhost', 27017)
 db = client['Big']
 collection = db['Data']
 
+collection.create_index("prixPredit")
 collection.insert_many(data2)
 
 client.close()
