@@ -10,7 +10,7 @@ L'objectif sera donc d'analyser ces données et de proposer un modèle de prédi
 ## Etapes du projet
 
 - Etape 0
-    - [] Prise en main de HADOOP
+    - [x] Prise en main de HADOOP
     - [x] Insertion des données
 - Etape 1
     - [x] Récupération des données (.csv) en local
