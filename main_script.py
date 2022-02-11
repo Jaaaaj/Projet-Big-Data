@@ -8,7 +8,7 @@ import paramiko
 from configparser import ConfigParser
 from botocore.exceptions import ClientError
 import time
-import csv, json
+import csv, json, datetime
 from pymongo import MongoClient
 
 
@@ -95,7 +95,7 @@ def get_public_ip():
         config_object.write(configfile)
 
 
-# Test security groups
+# Creation d'un security group qui autorise les connections ssh
 def create_security_groups():
     EC2_RESOURCE = boto3.resource('ec2', region_name=read_config("EC2", "region"))
 
@@ -134,13 +134,13 @@ def ssh_connection():
         "sudo yum update -y",
         "curl \"https://bootstrap.pypa.io/get-pip.py\" -o \"get-pip.py\"",
         "rm -r /path/to/dir/*",
-        "rm ./predict.csv"
         "mv ./credentials ./.aws/credentials",
         "mv ./config ./.aws/config",
         "python3 get-pip.py",
         "./.local/bin/pip install langdetect seaborn nltk sklearn pandas numpy lime geopy transformers",
         "python3 ./send_data.py",
-        "python3 ./BOGDOTO-Lite.py"
+        "python3 ./BOGDOTO-Lite.py",
+        "rm ./predict.csv"
     ]
     for command in commands:
         print("running command: {}".format(command))
@@ -151,8 +151,9 @@ def ssh_connection():
     c.close
 
 
+# Sauvegarde du csv des résultats dans MongoDB
 def sauvegarde_mongo():
-    csvPathFile = '../predict.csv'
+    csvPathFile = './tmp/predict.csv'
 
     # On convertit le fichier csv au format json
     data2 = []
@@ -165,9 +166,9 @@ def sauvegarde_mongo():
     # Envoi des données dans notre base Mongo
     client = MongoClient('localhost', 27017)
     db = client[read_config("MONGODB", "database")]
-    collection = db[read_config("MONGODB", "collection")]
+    collection = db[datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
 
-    collection.create_index("prixPredit")
+    collection.create_index("predictions")
     collection.insert_many(data2)
 
     client.close()
@@ -221,7 +222,7 @@ def main():
     os.system("scp -i %s %s ec2-user@%s:~/" % ("./tmp/aws_ec2_key.pem", read_config("EC2", "awspath")+"/credentials", read_config("EC2", "ipaddr")))   # Envoi des crédentials
     os.system("scp -i %s %s ec2-user@%s:~/" % ("./tmp/aws_ec2_key.pem", read_config("EC2", "awspath")+"/config", read_config("EC2", "ipaddr")))   # Envoi du conf
     ssh_connection()
-    os.system("scp -i %s ec2-user@%s:%s ../predict.csv" % ("./tmp/aws_ec2_key.pem", read_config("EC2", "ipaddr"), "~/predict.csv"))
+    os.system("scp -i %s ec2-user@%s:%s ./tmp/predict.csv" % ("./tmp/aws_ec2_key.pem", read_config("EC2", "ipaddr"), "~/predict.csv"))
 
     #  Wait
     input("Instance en cours d'exécution, appuyer sur une touche pour l'arrêter ")
@@ -234,7 +235,7 @@ def main():
         print(e)
 
     sauvegarde_mongo()
-    os.remove("../predict.csv")
+    os.remove("./tmp/predict.csv")
     print("Résultats sauvegardés dans MongoDB")
 
     print("Fin du script")
